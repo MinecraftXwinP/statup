@@ -2,12 +2,15 @@ package core
 
 import (
 	"fmt"
+	"time"
 	"github.com/go-yaml/yaml"
 	"github.com/hunterlong/statup/types"
 	"github.com/hunterlong/statup/utils"
 	"os"
 	"strings"
 	"time"
+	"regexp"
+	"strconv"
 	"upper.io/db.v3"
 	"upper.io/db.v3/lib/sqlbuilder"
 	"upper.io/db.v3/mysql"
@@ -172,6 +175,53 @@ func reverseSlice(s []string) []string {
 	return s
 }
 
+type migration struct {
+	statements string
+	version    int64
+}
+
+func (m migration) exec(db sqlbuilder.Database) error {
+	for s := range m.statements {
+		_, err := db.Exec(s)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type migrator struct {
+	db               sqlbuilder.Database
+	migrationContent string
+}
+
+func newMigrator(db sqlbuilder.Database, migrationContent string) *migrator {
+	return &migrator{
+		db,
+		migrationContent,
+	}
+}
+
+var migrationBlockPattern = regexp.MustCompile("(?s)(\\d+)\\s*(.+;)")
+
+func (m *migrator) getMigrations() ([]*migration,error) {
+	blocks := strings.Split(m.migrationContent, "=========================================== ")
+	count := len(blocks) - 2
+	migrations := make([]*migration, count)
+	
+	for i,b := range blocks[1:len(blocks)-1] {
+		matches := migrationBlockPattern.FindStringSubmatch(b)
+		version, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		migrations[count - i - 1] = &migration{
+			statements: matches[2],
+			version: version,
+		}
+	}
+	return migrations,nil
+}
 func RunDatabaseUpgrades() error {
 	var err error
 	currentMigration, err = SelectLastMigration()
